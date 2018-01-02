@@ -4,6 +4,8 @@ from pubnub.pnconfiguration import PNConfiguration
 from pubnub.pubnub_tornado import PubNubTornado
 from pubnub.pnconfiguration import PNReconnectionPolicy
 from datetime import datetime as dt
+import bitmex_basic
+import os
 
 config = PNConfiguration()
 config.subscribe_key = 'sub-c-52a9ab50-291b-11e5-baaa-0619f8945a4f'
@@ -14,6 +16,32 @@ from tornado import gen
 
 @gen.coroutine
 def main(channels):
+    
+    class board_trade():
+
+        def __init__(self,base_uri, symbol):
+            self.symbol = symbol
+            self.base_uri = base_uri
+            self.bitmex = bitmex_basic.BitMEX(symbol=self.symbol, apiKey=os.environ["API_KEY"], apiSecret=os.environ["API_SECRET"], base_uri=self.base_uri)
+            self.market_boards = self.bitmex.market_depth()
+
+        def current_price(self):
+            current_bitmex = bitmex_basic.BitMEX(symbol=self.symbol, apiKey=os.environ["API_KEY"], apiSecret=os.environ["API_SECRET"], base_uri=self.base_uri)
+            current_market_boards = current_bitmex.market_depth()
+            bid = current_market_boards[0]['bidPrice']
+            ask = current_market_boards[0]['askPrice']
+            return {'bid': bid,'ask': ask}
+        
+                #仕様は未定
+        def decide_volume(self):
+            volume = 0
+            volume =  self.bitmex.wallet() * self.current_price()['bid']
+            print(volume)
+            return int(volume)
+
+
+
+
     class BitflyerSubscriberCallback(SubscribeCallback):
         
         def __init__(self):
@@ -23,6 +51,9 @@ def main(channels):
             self.buysum = 0.0
             self.maxsellsum = 0.0
             self.maxbuysum = 0.0
+            self.ontrade = False
+            self.board_trade = board_trade(symbol='XBTUSD', base_uri='https://www.bitmex.com/api/v1/')
+            self.position = None
 
         def presence(self, pubnub, presence):
             pass  # handle incoming presence data
@@ -83,11 +114,11 @@ def main(channels):
                     self.buysum += message.message[0]['size']
             else:
                 self.timestamp = timestamp
-                # print('sell')
-                # print(self.sellsum)
-                # print('buy')
-                # print(self.buysum)
-                # print('-------------------')
+                print('sell')
+                print(self.sellsum)
+                print('buy')
+                print(self.buysum)
+                print('-------------------')
                 if(self.sellsum > self.maxsellsum):
                     print('max sell')
                     print(self.sellsum)
@@ -98,6 +129,45 @@ def main(channels):
                     self.maxbuysum = self.buysum
                 self.sellsum = 0.0
                 self.buysum = 0.0
+                #ここから取引
+            print('diff')
+            print(self.buysum - self.sellsum)
+            print('ontrade')
+            print(self.ontrade)
+            print('position')
+            print(self.position)
+
+            if(not self.ontrade):
+                if(self.buysum - self.sellsum > 5):
+                    quantity =  3 * self.board_trade.decide_volume()
+                    self.ontrade = True
+                    self.board_trade.bitmex.buy(quantity = quantity)
+                    self.position = 'buy'
+
+
+                if(self.sellsum - self.buysum > 5):
+                    quantity =  3 * self.board_trade.decide_volume()
+                    self.ontrade = True
+                    self.board_trade.bitmex.sell(quantity = quantity)
+                    self.position = 'sell'
+
+
+            if(self.ontrade):
+                if(self.buysum - self.sellsum > 1 and self.position == 'sell'):
+                    self.ontrade = False
+                    self.board_trade.bitmex.closeAllPosition()
+                    self.position = None
+
+                if(self.sellsum - self.buysum > 1 and self.position == 'buy'):
+                    self.ontrade = False
+                    self.board_trade.bitmex.closeAllPosition()
+                    self.position = None
+
+
+
+
+
+
 
 
 
